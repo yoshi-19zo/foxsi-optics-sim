@@ -12,7 +12,7 @@ __all__ = ["Reflectivity"]
 import numpy as np
 import glob
 import re
-from scipy.interpolate import interp2d
+from scipy.interpolate import RegularGridInterpolator
 import os
 import foxsisim
 import h5py
@@ -28,7 +28,21 @@ class Reflectivity:
         self.energy_ax = h['energy'][:]
         self.angle_ax = h['angle'][:]
         self.material = material
-        self.func = interp2d(self.angle_ax, self.energy_ax, self.data, kind='cubic')
+        # RegularGridInterpolator requires the axes to be in ascending order
+        # and the data to be in the shape (len(x), len(y))
+        self._interpolator = RegularGridInterpolator(
+            (self.angle_ax, self.energy_ax), 
+            self.data.T, 
+            bounds_error=False, 
+            fill_value=None,
+            method='cubic'
+        )
+
+    def func(self, angle, energy):
+        """
+        Wrapper to maintain compatibility with the old interp2d-like call signature.
+        """
+        return self._interpolator((angle, energy))
 
     def energy_range(self):
         """Return the valid range of energies"""
