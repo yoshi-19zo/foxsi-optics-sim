@@ -77,6 +77,8 @@ class Module:
                                      normal=[0, 0, -1], radius=r1)]
         else:
             self.shield = None
+        self._all_surfaces_no_core = None
+        self._regions = None
 
     def getDims(self):
         '''
@@ -98,38 +100,60 @@ class Module:
         surfaces.extend(self.coreFaces)
         return (surfaces)
 
-    def passRays(self, rays, robust=False):
+    def _build_surface_cache(self):
+        '''
+        Cache reusable surface groupings. This avoids rebuilding the same
+        lists on every passRays call and also lets callers provide a region
+        hint for the first-bounce search.
+        '''
+        if self._all_surfaces_no_core is not None and self._regions is not None:
+            return
+
+        all_surfaces = self.getSurfaces()
+        all_surfaces.remove(self.coreFaces[0])
+        all_surfaces.remove(self.coreFaces[1])
+
+        regions = [None for shell in self.shells]
+        for i, shell in enumerate(self.shells):
+            if i == len(self.shells) - 1:
+                regions[i] = shell.getSurfaces()
+            else:
+                regions[i] = shell.getSurfaces()
+                regions[i].extend(self.shells[i + 1].getSurfaces())
+
+        self._all_surfaces_no_core = tuple(all_surfaces)
+        self._regions = tuple(tuple(region) for region in regions)
+
+    def passRays(self, rays, robust=False, region_indices=None):
         '''
         Takes an array of rays and passes them through the front end of
         the module.
         '''
         # print('Module: passing ',len(rays),' rays')
 
-        # get all module surfaces
-        allSurfaces = self.getSurfaces()
-        allSurfaces.remove(self.coreFaces[0])  # we'll test these seperately
-        allSurfaces.remove(self.coreFaces[1])
+        self._build_surface_cache()
+        allSurfaces = self._all_surfaces_no_core
+        regions = self._regions
 
-        # create regions consisting of adjacent shells
-        regions = [None for shell in self.shells]
-        for i, shell in enumerate(self.shells):
-            # innermost shell
-            if i == len(self.shells) - 1:
-                regions[i] = shell.getSurfaces()
-                # regions[i].append(self.core)
-            else:
-                # outer shell (reflective side facing region)
-                regions[i] = shell.getSurfaces()
-                # nested shell (non reflective)
-                regions[i].extend(self.shells[i + 1].getSurfaces())
+        if region_indices is not None and len(region_indices) != len(rays):
+            raise ValueError('region_indices length does not match rays length')
 
-        for ray in rays:
+        for i, ray in enumerate(rays):
             # move ray to the front of the optics
             ray.moveToZ(self.coreFaces[0].center[2])
 
             # reset surfaces
-            surfaces = [s for s in allSurfaces]
-            firstBounce = True  # used for optimization
+            if region_indices is None:
+                surfaces = [s for s in allSurfaces]
+                firstBounce = True  # used for optimization
+            else:
+                region_index = int(region_indices[i])
+                if region_index < 0:
+                    region_index = 0
+                elif region_index >= len(regions):
+                    region_index = len(regions) - 1
+                surfaces = [s for s in regions[region_index]]
+                firstBounce = False
 
             # while ray is inside module
             while True:
